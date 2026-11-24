@@ -85,7 +85,8 @@ comparison, not soft quantization itself.
     plot_results.py        quality vs entropy rate
     envelope_experiment.py click robustness of the three envelopes
     tests/test_smoke.py    CPU checks, no downloads
-    notebooks/             Kaggle notebooks: setup + inspection, overnight comparison
+    notebooks/             Kaggle notebooks: setup + inspection, run 1 (overnight
+                           comparison), LibriSpeech preparation (CPU), run 2
     docs/figures/          figures from the first runs
 
 ## Running on Kaggle
@@ -186,12 +187,18 @@ envelope losses only.
   steps and then shrinking into the middle rounding level, after which every
   frame gets the same code and the decoder ignores it. The configuration used
   here (4 levels on each of 4 dimensions, no learning-rate warmup) differs
-  from the level choices recommended for FSQ; fixing it is the next step.
+  from the level choices recommended for FSQ.
+- **FSQ fix (in the code now, to be tested on speech):** a BatchNorm layer
+  before the rounding, so every channel has a spread of about 1, levels
+  (8, 6, 5) per group (240 codes, `--fsq_levels 8,6,5`), and a learning-rate
+  warmup (`--warmup 500`). On synthetic signals the projected values then
+  keep a spread of about 1 and a batch uses 20 to 40 codes per group, instead
+  of values near 0 and 1 to 3 codes.
 
 ### Next
 
-- FSQ with recommended levels and a learning-rate warmup.
-- Priors switched on later (`--content_start`, `--speaker_start`) for all
+- Run 2 (`notebooks/run2_delayed_priors_gpu.ipynb`): the fixed FSQ, and
+  priors switched on later (`--content_start`, `--speaker_start`) for all
   quantizers, to test the hypothesis above.
 - Several seeds, a test set spread over all dev-clean speakers, and longer
   training for intelligibility.

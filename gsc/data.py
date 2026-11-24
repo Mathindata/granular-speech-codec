@@ -45,8 +45,12 @@ class AudioFolder(Dataset):
             want_eval = split == "eval"
             self.files = [f for f in files
                           if _is_eval(f.relative_to(root), eval_fraction) == want_eval]
-        if max_files:
-            self.files = self.files[:max_files]
+        if max_files and len(self.files) > max_files:
+            if split == "train":
+                self.files = self.files[:max_files]
+            else:  # evenly spaced over the sorted list, so every speaker folder is sampled
+                idx = np.linspace(0, len(self.files) - 1, max_files).round().astype(int)
+                self.files = [self.files[i] for i in idx]
         if not self.files:
             raise FileNotFoundError(f"no {split} audio found under {root}")
         self.split, self.segment, self.eval_offset = split, segment, eval_offset
@@ -60,7 +64,8 @@ class AudioFolder(Dataset):
         if len(x) < n:
             x = np.pad(x, (0, n - len(x)))
         if self.split == "train":
-            start = np.random.randint(0, len(x) - n + 1)
+            # torch's generator is seeded differently in each loader worker
+            start = int(torch.randint(0, len(x) - n + 1, (1,)))
         else:  # fixed crop, skipping the leading silence
             start = min(self.eval_offset, len(x) - n)
         x = x[start:start + n]

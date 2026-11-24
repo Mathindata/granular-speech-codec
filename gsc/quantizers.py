@@ -41,34 +41,53 @@ def _merge_groups(z):
 
 
 class FSQ(nn.Module):
-    def __init__(self, latent_dim, groups=4, codebook_size=256):
+    """Finite scalar quantization.
+
+    levels: number of levels per dimension in one group, e.g. (8, 6, 5) gives
+    8 * 6 * 5 = 240 codes per group. If None, uses d dims of L levels with
+    L**d == codebook_size (e.g. 256 -> 4 dims x 4 levels).
+    """
+
+    def __init__(self, latent_dim, groups=4, codebook_size=256, levels=None):
         super().__init__()
-        # choose d dims of L levels per group with L**d == K
-        options = [(d, round(codebook_size ** (1 / d))) for d in range(1, 9)]
-        options = [(d, L) for d, L in options if L >= 2 and L ** d == codebook_size]
-        if not options:
-            raise ValueError(f"codebook_size {codebook_size} is not L**d")
-        # prefer a few dims with several levels, e.g. 256 -> 4 dims x 4 levels
-        d, L = min(options, key=lambda p: abs(p[1] - 4))
-        self.groups, self.dims, self.levels, self.K = groups, d, L, codebook_size
-        self.proj_in = nn.Conv1d(latent_dim, groups * d, 1)
+        if levels is None:
+            options = [(d, round(codebook_size ** (1 / d))) for d in range(1, 9)]
+            options = [(d, L) for d, L in options if L >= 2 and L ** d == codebook_size]
+            if not options:
+                raise ValueError(f"codebook_size {codebook_size} is not L**d")
+            d, L = min(options, key=lambda p: abs(p[1] - 4))
+            levels = [L] * d
+        levels = [int(v) for v in levels]
+        self.groups, self.dims, self.levels = groups, len(levels), levels
+        self.K = int(torch.tensor(levels).prod())
+        d = self.dims
+        # BatchNorm gives every channel a spread of about 1 before the rounding.
+        # Without it the projected values start near 0 and all fall into the
+        # middle level, so every frame gets the same code (seen in practice).
+        self.proj_in = nn.Sequential(nn.Conv1d(latent_dim, groups * d, 1), nn.BatchNorm1d(groups * d))
         self.proj_out = nn.Conv1d(groups * d, latent_dim, 1)
-        half = (L - 1) / 2
-        offset = 0.5 if L % 2 == 0 else 0.0
-        self.register_buffer("half_range", torch.tensor(half))
-        self.register_buffer("offset", torch.tensor(offset))
-        self.register_buffer("shift", torch.tensor(math.atanh(offset / half)))
-        self.register_buffer("radix", L ** torch.arange(d))
+        L = torch.tensor(levels, dtype=torch.float32)
+        half = (L - 1) * (1 + 1e-3) / 2           # as in Mentzer et al.
+        offset = torch.where(L % 2 == 0, 0.5, 0.0)
+        shift = torch.tan(offset / half)
+        width = torch.floor(L / 2)                # rounded values / width lie in [-1, 1]
+        rep = lambda t: t.repeat(groups)[None, :, None]   # one value per latent channel
+        self.register_buffer("half_range", rep(half))
+        self.register_buffer("offset", rep(offset))
+        self.register_buffer("shift", rep(shift))
+        self.register_buffer("width", rep(width))
+        self.register_buffer("lowest", rep(-torch.floor(L / 2)))   # level index 0
+        radix = torch.cumprod(torch.tensor([1] + levels[:-1]), 0)
+        self.register_buffer("radix", radix)
 
     def forward(self, z, **_):
         h = self.proj_in(z)
         bounded = torch.tanh(h + self.shift) * self.half_range - self.offset
         rounded = bounded + (torch.round(bounded) - bounded).detach()
-        # integer level per dim, 0..L-1
-        lv = (torch.round(bounded) + self.offset + self.half_range).long()
-        lv = _split_groups(lv, self.groups)  # (B, G, T, d)
+        lv = (torch.round(bounded) - self.lowest).long()   # 0 .. L-1 per dim
+        lv = _split_groups(lv, self.groups)                  # (B, G, T, d)
         indices = (lv * self.radix).sum(-1)
-        z_q = self.proj_out(rounded / (self.half_range + self.offset))
+        z_q = self.proj_out(rounded / self.width)
         return {"z_q": z_q, "indices": indices, "aux_loss": z.new_zeros(())}
 
 
@@ -181,10 +200,10 @@ class FuzzyVQ(_CodebookBase):
                 "memberships": u}
 
 
-def build_quantizer(name, latent_dim, groups, codebook_size, code_dim=8):
+def build_quantizer(name, latent_dim, groups, codebook_size, code_dim=8, fsq_levels=None):
     name = name.lower()
     if name == "fsq":
-        return FSQ(latent_dim, groups, codebook_size)
+        return FSQ(latent_dim, groups, codebook_size, fsq_levels)
     if name == "vq":
         return VQ(latent_dim, groups, codebook_size, code_dim)
     if name == "fuzzy":

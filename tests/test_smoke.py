@@ -63,7 +63,7 @@ def test_fuzzy_becomes_hard_and_eval_uses_prototype():
 def test_fsq_index_is_a_bijection():
     m = Codec("fsq", channels=8, latent_dim=16, groups=1, codebook_size=256)
     fsq = m.quantizer
-    levels = torch.cartesian_prod(*[torch.arange(fsq.levels)] * fsq.dims)
+    levels = torch.cartesian_prod(*[torch.arange(L) for L in fsq.levels])
     idx = (levels * fsq.radix).sum(-1)
     assert len(idx.unique()) == 256 and idx.max() == 255
 
@@ -104,3 +104,32 @@ def test_priors_with_tiny_random_models():
     assert y.grad is not None and y.grad.abs().sum() > 0
     assert all(p.grad is None for p in cp.parameters())  # priors stay frozen
     assert len(cp.transcribe(x)) == 2
+
+
+def test_fsq_mixed_levels():
+    m = Codec("fsq", channels=8, latent_dim=16, groups=2, fsq_levels=[8, 6, 5])
+    fsq = m.quantizer
+    assert m.codebook_size == 240
+    levels = torch.cartesian_prod(*[torch.arange(L) for L in fsq.levels])
+    idx = (levels * fsq.radix).sum(-1)
+    assert len(idx.unique()) == 240 and idx.max() == 239
+    x = torch.randn(2, 1, 6400) * 0.5
+    y, q = m(x)
+    assert q["indices"].max() < 240 and q["indices"].min() >= 0
+    # every level of every dim is reachable: push values to both extremes
+    h = torch.linspace(-6, 6, 400)[None, None, :].repeat(1, 6, 1)
+    b = torch.tanh(h + fsq.shift) * fsq.half_range - fsq.offset
+    lv = (torch.round(b) - fsq.lowest)
+    for c, L in enumerate([8, 6, 5] * 2):
+        assert set(lv[0, c].long().tolist()) == set(range(L))
+
+
+def test_eval_files_spread(tmp_path):
+    import numpy as np, soundfile as sf
+    from gsc.data import AudioFolder
+    for spk in range(5):
+        (tmp_path / f"s{spk}").mkdir()
+        for k in range(10):
+            sf.write(tmp_path / f"s{spk}" / f"{k}.flac", np.zeros(20000, np.float32), 16000)
+    ds = AudioFolder(tmp_path, "all", max_files=5)
+    assert sorted(f.parent.name for f in ds.files) == [f"s{i}" for i in range(5)]

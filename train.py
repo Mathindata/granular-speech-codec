@@ -15,6 +15,7 @@ Change --codebook_size (16, 64, 256, 1024) to sweep the rate.
 
 import argparse
 import json
+import math
 import time
 from pathlib import Path
 
@@ -37,6 +38,8 @@ def get_args():
     p.add_argument("--groups", type=int, default=4)
     p.add_argument("--codebook_size", type=int, default=256)
     p.add_argument("--code_dim", type=int, default=8)
+    p.add_argument("--fsq_levels", default=None,
+                   help="FSQ levels per dim in a group, e.g. 8,6,5 (240 codes per group)")
     p.add_argument("--latent_dim", type=int, default=64)
     p.add_argument("--channels", type=int, default=32)
     p.add_argument("--steps", type=int, default=40000)
@@ -45,6 +48,7 @@ def get_args():
     p.add_argument("--eval_segment", type=float, default=4.0)
     p.add_argument("--eval_items", type=int, default=200)
     p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--warmup", type=int, default=0, help="linear learning-rate warmup steps")
     p.add_argument("--workers", type=int, default=2)
     # loss weights
     p.add_argument("--w_stft", type=float, default=1.0)
@@ -96,8 +100,10 @@ def main():
                               num_workers=a.workers, drop_last=True, persistent_workers=a.workers > 0)
     eval_loader = DataLoader(eval_set, 8, shuffle=False, num_workers=a.workers)
 
+    fsq_levels = [int(v) for v in a.fsq_levels.split(",")] if a.fsq_levels else None
     model = Codec(a.quantizer, a.channels, latent_dim=a.latent_dim, groups=a.groups,
-                  codebook_size=a.codebook_size, code_dim=a.code_dim).to(device)
+                  codebook_size=a.codebook_size, code_dim=a.code_dim,
+                  fsq_levels=fsq_levels).to(device)
     print(f"params: {sum(p.numel() for p in model.parameters()) / 1e6:.2f} M, "
           f"nominal rate {model.nominal_bits_per_frame() * sr / model.hop:.0f} bit/s")
 
@@ -110,7 +116,12 @@ def main():
         speaker = SpeakerPrior().to(device)
 
     opt = torch.optim.AdamW(model.parameters(), a.lr, betas=(0.8, 0.99))
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, a.steps, eta_min=a.lr * 0.05)
+    def lr_factor(step):  # linear warmup, then cosine decay to 5 %
+        if step < a.warmup:
+            return (step + 1) / a.warmup
+        r = (step - a.warmup) / max(1, a.steps - a.warmup)
+        return 0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * r))
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_factor)
     stft_loss, env_loss = MultiResSTFTLoss(), EnvelopeLoss()
     log = open(out / "train_log.jsonl", "a")
 

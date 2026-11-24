@@ -49,15 +49,17 @@ def main():
         print(f"{r['run']:24s} {r['quantizer']:8s} {r['nominal_bps']:8.0f} {r['entropy_bps']:8.0f} "
               + " ".join(f"{r.get(k, float('nan')):16.4f}" for k, _ in metrics))
 
-    fig, axes = plt.subplots(1, len(metrics), figsize=(4.2 * len(metrics), 3.6), squeeze=False)
+    fig, axes = plt.subplots(1, len(metrics), figsize=(4.2 * len(metrics), 3.8), squeeze=False)
+    markers = {"fuzzy": "o", "vq": "s", "fsq": "^"}
     for ax, (k, title) in zip(axes[0], metrics):
-        for q, rs in sorted(by_q.items()):
-            rs = sorted((r for r in rs if k in r), key=lambda r: r["entropy_bps"])
-            ax.plot([r["entropy_bps"] for r in rs], [r[k] for r in rs], "o-", label=q)
+        for i, r in enumerate(sorted(rows, key=lambda r: r["run"])):
+            if k in r:
+                ax.plot(r["entropy_bps"], r[k], markers.get(r["quantizer"], "o"),
+                        color=f"C{i}", ms=8, label=r["run"])
         ax.set_xlabel("entropy rate (bit/s)")
         ax.set_title(title, fontsize=9)
         ax.grid(alpha=0.3)
-    axes[0][0].legend()
+    axes[0][0].legend(fontsize=7)
     fig.tight_layout()
     fig.savefig(a.out, dpi=130)
     print("saved", a.out)

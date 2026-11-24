@@ -8,6 +8,8 @@ the nominal rate is 1.6 kbit/s.
 Decoder: the mirror image with transposed convolutions.
 """
 
+import math
+
 import torch
 import torch.nn as nn
 
@@ -57,7 +59,7 @@ class DecBlock(nn.Module):
 
 class Codec(nn.Module):
     def __init__(self, quantizer="fuzzy", channels=32, strides=(2, 4, 5, 8),
-                 latent_dim=64, groups=4, codebook_size=256, code_dim=8):
+                 latent_dim=64, groups=4, codebook_size=256, code_dim=8, fsq_levels=None):
         super().__init__()
         self.strides = tuple(strides)
         self.hop = 1
@@ -77,12 +79,14 @@ class Codec(nn.Module):
         dec += [nn.ELU(), nn.Conv1d(chs[0], 1, 7, padding=3), nn.Tanh()]
         self.decoder = nn.Sequential(*dec)
 
-        self.quantizer = build_quantizer(quantizer, latent_dim, groups, codebook_size, code_dim)
+        self.quantizer = build_quantizer(quantizer, latent_dim, groups, codebook_size, code_dim,
+                                         fsq_levels)
         self.quantizer_name = quantizer
-        self.groups, self.codebook_size = groups, codebook_size
+        self.groups = groups
+        self.codebook_size = getattr(self.quantizer, "K", codebook_size)
 
     def nominal_bits_per_frame(self):
-        return self.groups * torch.log2(torch.tensor(float(self.codebook_size))).item()
+        return self.groups * math.log2(self.codebook_size)
 
     def encode(self, x):
         """x: (B, 1, N) with N a multiple of hop -> latent (B, D, N/hop)."""
