@@ -16,21 +16,34 @@ difference comes from the quantizer.
 
 | Codec part | Granular computing term |
 |---|---|
-| encoder + memberships `u_i` | granulation: a frame becomes degrees of membership to c prototypes |
-| decoder input `sum u_i^m v_i / sum u_i^m` | degranulation (c-means reconstruction) |
-| codebook size K | granularity (number of granules) |
-| c-means objective `J = sum u_i^m D_i` | the granulation criterion, used as the quantizer's training loss |
+| encoder + memberships $u_i$ | granulation: a frame becomes degrees of membership to $K$ prototypes |
+| decoder input $\hat{x} = \sum_i u_i^m v_i \big/ \sum_i u_i^m$ | degranulation (c-means reconstruction) |
+| codebook size $K$ | granularity (number of granules) |
+| c-means objective $J = \sum_i u_i^m D_i$ | the granulation criterion, used as the quantizer's training loss |
 | content prior: CTC posteriors per frame | a membership vector over characters; the codec must keep it (KL) |
 | speaker prior: speaker embedding | the codec must keep the speaker (cosine) |
 | `envelope_experiment.py` | interval-valued envelope from the principle of justifiable granularity |
 
-Memberships, with squared distances `D_i` and fuzzifier `m > 1`:
+For one frame vector $x$ and prototypes $v_1, \dots, v_K$, with distances
+$d_i = \lVert x - v_i \rVert$, squared distances $D_i = d_i^2$ and fuzzifier
+$m > 1$, the memberships are
 
-    u_i = 1 / sum_j (d_i / d_j)^(2/(m-1))  =  softmax_i( -log(D_i) / (m-1) )
+```math
+u_i \;=\; \frac{1}{\sum_{j=1}^{K} \left( d_i / d_j \right)^{2/(m-1)}}
+\;=\; \operatorname{softmax}_i\!\left( -\frac{\log D_i}{m-1} \right),
+\qquad \sum_{i=1}^{K} u_i = 1 .
+```
 
-As `m -> 1` the memberships become one-hot at the nearest prototype, which is
-plain VQ. During training `m` goes from 1.5 to 1.05 and the forward value moves
-from the soft reconstruction to the hard prototype (`alpha` 0 to 1). The
+and degranulation rebuilds the frame as
+
+```math
+\hat{x} \;=\; \frac{\sum_{i=1}^{K} u_i^{m}\, v_i}{\sum_{i=1}^{K} u_i^{m}} .
+```
+
+As $m \to 1$ the exponent $2/(m-1) \to \infty$, so the memberships become
+one-hot at the nearest prototype, which is plain VQ. During training $m$ goes
+from 1.5 to 1.05, and the forward value moves from the soft reconstruction to
+the hard prototype as $\alpha$ (`alpha`) goes from 0 to 1. The
 gradient always comes from the soft path. At test time only the index is sent
 and the decoder gets the hard prototype.
 
