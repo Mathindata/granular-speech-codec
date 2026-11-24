@@ -1,0 +1,7 @@
+runs/
+__pycache__/
+*.pyc
+*.tar.gz
+LibriSpeech/
+.pytest_cache/
+runs_smoke_*.log
