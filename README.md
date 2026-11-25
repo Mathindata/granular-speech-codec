@@ -55,7 +55,7 @@ $m > 1$, the memberships are
 
 ```math
 u_i \;=\; \frac{1}{\sum_{j=1}^{K} \left( d_i / d_j \right)^{2/(m-1)}}
-\;=\; \operatorname{softmax}_i\!\left( -\frac{\log D_i}{m-1} \right),
+\;=\; \mathrm{softmax}_i\left( -\frac{\log D_i}{m-1} \right),
 \qquad \sum_{i=1}^{K} u_i = 1 .
 ```
 
